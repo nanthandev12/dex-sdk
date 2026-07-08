@@ -17,7 +17,15 @@ pub struct EventContext<T> {
 }
 
 impl<T> BlockEvents<T> {
-    pub(crate) fn new(instant: super::StateInstant, events: Vec<T>) -> Self {
+    /// Construct a block-events batch from an instant and its ordered events.
+    ///
+    /// Exposed so external indexers can build their own event source (e.g. a
+    /// lower-latency `proposed`-tag WebSocket log subscription) and feed
+    /// [`crate::state::Exchange::apply_events`] directly, instead of relying on
+    /// the built-in `safe`-tag [`crate::stream::raw`] poller. Events must be
+    /// sorted by `log_index` within the block; the caller owns consistency
+    /// (e.g. reorg handling) since the `proposed` tag is not final.
+    pub fn new(instant: super::StateInstant, events: Vec<T>) -> Self {
         Self { instant, events }
     }
 
