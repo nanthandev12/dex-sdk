@@ -48,6 +48,8 @@ pub mod stream;
 pub mod testing;
 #[cfg(test)]
 mod tests;
+#[cfg(feature = "transport")]
+pub mod transport;
 pub mod types;
 
 use alloy::primitives::{Address, address};

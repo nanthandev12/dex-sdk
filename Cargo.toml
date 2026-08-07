@@ -33,8 +33,22 @@ derive_more = { version = "2.1.1", default-features = false, features = [
 fastnum = { version = "0.7.4" }
 futures = { version = "0.3.32" }
 itertools = { version = "0.14.0" }
+# HTTP client used by the `transport` module to bind outbound connections to a
+# configured source (elastic) IP. Pinned to alloy 2.0.4's resolved reqwest so
+# cargo unifies on one copy. `rustls` keeps TLS on the process-wide crypto
+# provider (matching alloy's `reqwest-rustls-tls` feature).
+reqwest = { version = "0.13", default-features = false, features = ["json", "rustls"] }
 tabled = { version = "0.20.0", features = ["ansi"] }
 thiserror = { version = "2.0.18" }
+# WebSocket client used by the `transport` module's `ws` feature to bind
+# outbound WS connections to a configured source IP. Pinned to the version
+# alloy-transport-ws 2.1.1 resolves (0.28) so cargo unifies on one copy.
+# `connect` provides the tokio TCP connector; `rustls-tls-webpki-roots` matches
+# alloy-transport-ws's TLS setup.
+tokio-tungstenite = { version = "0.28", default-features = false, features = [
+  "connect",
+  "rustls-tls-webpki-roots",
+] }
 tokio = { version = "1.52.2", features = [
   "sync",
   "rt-multi-thread",
@@ -42,3 +56,4 @@ tokio = { version = "1.52.2", features = [
   "time",
 ] }
 tokio-util = { version = "0.7.18" }
+url = { version = "2.5" }

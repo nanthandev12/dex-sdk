@@ -14,8 +14,13 @@ derive_more.workspace = true
 fastnum.workspace = true
 futures.workspace = true
 itertools.workspace = true
+reqwest = { workspace = true, optional = true }
+rustls = { version = "0.23", default-features = false, features = ["aws-lc-rs"], optional = true }
 tabled = { workspace = true, optional = true }
 thiserror.workspace = true
+tokio = { workspace = true, optional = true }
+tokio-tungstenite = { workspace = true, optional = true }
+url = { workspace = true, optional = true }
 
 [dev-dependencies]
 alloy = { workspace = true, features = ["node-bindings"] }
@@ -31,3 +36,18 @@ display = ["tabled", "colored"]
 # mutation methods in production builds.
 test-utils = []
 testing = ["alloy/node-bindings"]
+# Enables the `transport` module (source-IP-bound HTTP/WS provider helpers).
+# Pulls in `reqwest` for the HTTP path; `rustls` installs the process-wide
+# crypto provider before TLS handshakes.
+transport = ["dep:reqwest", "dep:url", "dep:rustls"]
+# Enables the `transport` module's WebSocket provider helper
+# (`transport::ws_provider`), which requires alloy's `provider-ws` feature plus
+# a direct `tokio-tungstenite` dep for source-IP-bound WS sockets. Implies
+# `transport` (the HTTP helpers are always available with it).
+ws = [
+  "transport",
+  "alloy/provider-ws",
+  "alloy/pubsub",
+  "dep:tokio",
+  "dep:tokio-tungstenite",
+]
