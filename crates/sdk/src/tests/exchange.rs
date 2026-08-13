@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use alloy::primitives::{I256, TxHash, U256};
-use fastnum::udec128;
+use fastnum::{UD64, udec128};
 
 use crate::{
     Chain,
@@ -10,7 +10,10 @@ use crate::{
         OrderPlaced, PositionClosed, PositionOpened, RecycleFeeToAccount,
     },
     num::Converter,
-    state::{Exchange, OrderContext, Perpetual},
+    state::{
+        ContractFeatures, Exchange, FeeSchedule, FeeScheduleKey, FeeScheduleRegistry, OrderContext,
+        Perpetual,
+    },
     stream::RawEvent,
     types::{
         self, OrderId, RequestId,
@@ -32,11 +35,17 @@ fn create_test_exchange() -> Exchange {
     Exchange::new(
         chain,
         instant,
+        ContractFeatures::current(),
         collateral_converter,
         100,
         udec128!(0.001),
         udec128!(0.001),
         udec128!(0.001),
+        FeeScheduleRegistry::new(
+            FeeSchedule::flat(FeeScheduleKey::Default, UD64::ZERO, UD64::ZERO),
+            FeeSchedule::flat(FeeScheduleKey::RwaDefault, UD64::ZERO, UD64::ZERO),
+            HashMap::new(),
+        ),
         perpetuals,
         accounts,
         false,
@@ -63,6 +72,7 @@ fn create_test_order_context(
         post_only: false,
         fill_or_kill: false,
         immediate_or_cancel: false,
+        builder: None,
         maker_fills: vec![],
         clearing_remaining_order: false,
         position_closed_at_log_index: None,
@@ -161,10 +171,11 @@ fn apply_event(
         .expect("UT");
 }
 
-fn smart_contract_position_closed_inner() -> (Exchange, Option<OrderContext>) {
+fn smart_contract_position_closed_inner(request_id: RequestId) -> (Exchange, Option<OrderContext>) {
     let mut exchange = create_test_exchange();
 
-    let mut order_context = Some(create_test_order_context(1, None, 1, CloseLong, U256::from(123)));
+    let mut order_context =
+        Some(create_test_order_context(request_id, None, 1, CloseLong, U256::from(123)));
 
     let account_created = event_account_created(1);
     apply_event(&mut exchange, account_created, &mut order_context, 0);
@@ -189,10 +200,18 @@ fn smart_contract_position_closed_inner() -> (Exchange, Option<OrderContext>) {
 
 #[test]
 fn test_smart_contract_position_closed() {
-    let (mut exchange, mut order_context) = smart_contract_position_closed_inner();
+    let maker_client_order_id = 42;
+    let (mut exchange, mut order_context) =
+        smart_contract_position_closed_inner(maker_client_order_id);
 
     let maker_order_filled = event_maker_order_filled(1, 1);
     apply_event(&mut exchange, maker_order_filled, &mut order_context, 5);
+
+    let maker_fill = order_context
+        .as_ref()
+        .and_then(|context| context.maker_fills.first())
+        .expect("maker fill exists");
+    assert_eq!(maker_fill.maker_client_order_id, Some(maker_client_order_id));
 
     // PositionClosed -> MakerOrderFilled implies Close Position
     let perps = exchange.perpetuals();
@@ -202,7 +221,7 @@ fn test_smart_contract_position_closed() {
 
 #[test]
 fn test_smart_contract_position_closed_recycling_fee_to_account() {
-    let (mut exchange, mut order_context) = smart_contract_position_closed_inner();
+    let (mut exchange, mut order_context) = smart_contract_position_closed_inner(1);
 
     let recycle_fee_to_account = event_recycle_fee_to_account(1, 1, 1, 1);
     apply_event(&mut exchange, recycle_fee_to_account, &mut order_context, 5);
