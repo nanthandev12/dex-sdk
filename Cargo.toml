@@ -42,10 +42,12 @@ tabled = { version = "0.20.0", features = ["ansi"] }
 thiserror = { version = "2.0.18" }
 # WebSocket client used by the `transport` module's `ws` feature to bind
 # outbound WS connections to a configured source IP. Pinned to the version
-# alloy-transport-ws 2.1.1 resolves (0.28) so cargo unifies on one copy.
+# alloy-transport-ws 2.3.x resolves (0.29) so cargo unifies on one copy — the
+# `WsBackend::spawn` we call is only implemented for the exact tokio-tungstenite
+# stream type alloy-transport-ws is built against, so these must match.
 # `connect` provides the tokio TCP connector; `rustls-tls-webpki-roots` matches
 # alloy-transport-ws's TLS setup.
-tokio-tungstenite = { version = "0.28", default-features = false, features = [
+tokio-tungstenite = { version = "0.29", default-features = false, features = [
   "connect",
   "rustls-tls-webpki-roots",
 ] }
