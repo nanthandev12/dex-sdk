@@ -58,8 +58,7 @@ const USD_DECIMALS: u8 = 6;
 /// unchanged signature, so the current bindings drive it, and the current
 /// `ExchangeEvents` still decodes its events - the V1 event signatures are
 /// retained in the ABI for exactly this reason.
-const PREVIOUS_IMPLEMENTATION: &str =
-    include_str!("../../../../abi/dex/legacy/Exchange.v1.1.7.3.bin");
+const PREVIOUS_IMPLEMENTATION: &str = include_str!("../../abi/dex/legacy/Exchange.v1.1.7.3.bin");
 
 #[derive(Debug)]
 pub struct TestExchange {
@@ -145,6 +144,51 @@ impl TestExchange {
         // The proxy now runs the v1.1.7.4 implementation, whose `addContract`
         // dropped the two genesis-fee args, so subsequent listings use it.
         self.legacy.store(false, Ordering::Relaxed);
+    }
+
+    /// Runs the v1.1.7.5 fee-unit migration (`initializeV4`) on the proxy,
+    /// completing the two-hop upgrade that mainnet took: v1.1.7.3b ->
+    /// v1.1.7.4 ([`Self::upgrade`]) -> v1.1.7.5.
+    ///
+    /// A separate transaction because the two are separate reinitializers and
+    /// `upgradeToAndCall` runs one; the live upgrade is likewise a second
+    /// `upgradeToAndCall` months after the first.
+    ///
+    /// **Call it immediately after [`Self::upgrade`].** The implementation
+    /// deployed there is already this one, and its `getFee` divides by 1e6
+    /// while the schedules `initializeV3` seeded are still in
+    /// hundred-thousandths - so any fill in between is charged a tenth of its
+    /// rate. That intermediate state is real (the contract documents it as the
+    /// hazard of a bare `upgradeTo`) but it is not what any deployment should
+    /// trade in.
+    ///
+    /// `taker_fees` / `maker_fees` are the ladder [`Self::upgrade`] seeded: the
+    /// migration attests its pre-image on chain and reverts on a mismatch. The
+    /// rates it writes are `x10 / 2` of them - the unit change and the v1.1.7.5
+    /// rate cut in one exact step.
+    pub async fn upgrade_fee_unit(
+        &self,
+        taker_fees: [UD64; state::FEE_TIERS],
+        maker_fees: [UD64; state::FEE_TIERS],
+    ) {
+        let fee_converter = num::fee_converter();
+        self.exchange
+            .initializeV4(
+                taker_fees.map(|fee| fee_converter.to_unsigned(fee)),
+                maker_fees.map(|fee| fee_converter.to_unsigned(fee)),
+                // Only the DEFAULT schedule holds a non-zero word: `upgrade`
+                // leaves the RWA one blank, as the real upgrade configuration
+                // does, and no custom schedule is ever written here.
+                U256::ONE,
+            )
+            .gas(30_000_000)
+            .send()
+            .await
+            .map_err::<DexError, _>(|err| DexError::Provider(err.into()))
+            .unwrap()
+            .get_receipt()
+            .await
+            .unwrap();
     }
 
     async fn deploy(implementation: Option<&str>) -> Self {
@@ -326,7 +370,12 @@ impl TestExchange {
             .unwrap();
         let log = receipt.decoded_log::<Exchange::AccountCreated>().unwrap();
         self.account_address.insert(log.id.to(), log.account);
-        TestAccount { id: log.id.to(), address: log.account, exchange: self }
+        TestAccount {
+            id: log.id.to(),
+            address: log.account,
+            pk: self.anvil.nth_key(idx + 3).unwrap().to_bytes().encode_hex(),
+            exchange: self,
+        }
     }
 
     /// Sets the exchange-wide default fee schedule, eight `(taker, maker)`
@@ -337,7 +386,10 @@ impl TestExchange {
         taker_fees: [UD64; state::FEE_TIERS],
         maker_fees: [UD64; state::FEE_TIERS],
     ) {
-        let fee_converter = num::fee_converter();
+        // ppm: the schedule setters only exist from v1.1.7.4, and the only
+        // implementation this harness ever deploys is the current one, whose
+        // getFee reads stored rates as millionths.
+        let fee_converter = num::ppm_fee_converter();
         self.exchange
             .setDefaultPerpFeeSchedValues(
                 taker_fees.map(|fee| fee_converter.to_unsigned(fee)),
@@ -359,7 +411,7 @@ impl TestExchange {
         taker_fees: [UD64; state::FEE_TIERS],
         maker_fees: [UD64; state::FEE_TIERS],
     ) {
-        let fee_converter = num::fee_converter();
+        let fee_converter = num::ppm_fee_converter();
         self.exchange
             .setDefaultRwaFeeSchedValues(
                 taker_fees.map(|fee| fee_converter.to_unsigned(fee)),

@@ -6,7 +6,7 @@ pub mod dex {
         #[derive(Debug)]
         #[sol(rpc)]
         Exchange,
-        "../../abi/dex/Exchange.json"
+        "abi/dex/Exchange.json"
     );
 }
 
@@ -16,7 +16,7 @@ pub mod erc1967_proxy {
         #[derive(Debug)]
         #[sol(rpc)]
         ERC1967Proxy,
-        "../../abi/dex/ERC1967Proxy.json"
+        "abi/dex/ERC1967Proxy.json"
     );
 }
 
@@ -26,7 +26,7 @@ pub mod errors {
         #[derive(Debug)]
         #[sol(rpc)]
         Exchange,
-        "../../abi/dex/Errors.abi.json"
+        "abi/dex/Errors.abi.json"
     );
 }
 
@@ -37,6 +37,7 @@ pub mod errors {
 /// drive [`crate::testing::TestExchange::new_at_previous_version`]. Calling
 /// them against a current deployment reverts on the unknown selector.
 #[cfg(feature = "testing")]
+#[allow(clippy::too_many_arguments)]
 pub mod dex_legacy {
     alloy::sol! {
         #[sol(rpc)]
@@ -69,6 +70,6 @@ pub mod testing {
         #[derive(Debug)]
         #[sol(rpc)]
         TestToken,
-        "../../abi/testing/TestToken.json"
+        "abi/testing/TestToken.json"
     );
 }

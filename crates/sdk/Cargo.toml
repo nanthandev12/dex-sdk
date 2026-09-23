@@ -1,8 +1,11 @@
 [package]
 name = "perpl-sdk"
+description = "Rust SDK for the Perpl decentralized perpetuals exchange"
 build = "build.rs"
 edition.workspace = true
 version.workspace = true
+license.workspace = true
+repository.workspace = true
 
 [dependencies]
 alloy.workspace = true
@@ -23,7 +26,11 @@ tokio-tungstenite = { workspace = true, optional = true }
 url = { workspace = true, optional = true }
 
 [dev-dependencies]
-alloy = { workspace = true, features = ["node-bindings"] }
+alloy = { workspace = true, features = [
+  "network",
+  "node-bindings",
+  "signer-local",
+] }
 tabled = { workspace = true }
 tokio = { workspace = true }
 
@@ -51,3 +58,6 @@ ws = [
   "dep:tokio",
   "dep:tokio-tungstenite",
 ]
+
+[package.metadata.cargo-machete]
+ignored = ["alloy-sol-types"]

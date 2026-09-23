@@ -615,7 +615,10 @@ impl Exchange {
             // Superseded by `ContractAddedV2` in v1.1.7.4, replayed from earlier
             // history only, where the listing carried resolved base fees rather
             // than a fee schedule key
+            ExchangeEvents::ContractAdded(e) if self.is_excluded(e.perpId) => vec![],
             ExchangeEvents::ContractAdded(e) => {
+                // Per100K unconditionally: this event was retired in v1.1.7.4, so it
+                // can only be replayed from history that predates the redenomination.
                 let fee_converter = num::fee_converter();
                 vec![self.add_perpetual(
                     instant,
@@ -637,6 +640,10 @@ impl Exchange {
                     ),
                 )]
             },
+            // Checked before the fee-schedule resolution below, so an excluded
+            // contract cannot fail the block over a schedule that is only
+            // needed to track it.
+            ExchangeEvents::ContractAddedV2(e) if self.is_excluded(e.perpId) => vec![],
             ExchangeEvents::ContractAddedV2(e) => {
                 // The listing reports the contract's fee schedule KEY, the rates
                 // being resolvable from it - a new contract is placed on the
@@ -685,22 +692,28 @@ impl Exchange {
                 })
                 .into_iter()
                 .collect(),
-            ExchangeEvents::ContractPaused(e) => self
-                .perpetual(e.perpId)
-                .map(|perp| {
-                    perp.update_paused(instant, e.paused);
-                    StateEvents::perpetual(perp, PerpetualEventType::Paused(perp.is_paused()))
-                })
-                .into_iter()
-                .collect(),
-            ExchangeEvents::ContractRemoved(e) => self
-                .perpetual(e.perpId)
-                .map(|perp| {
-                    perp.update_paused(instant, true);
-                    StateEvents::perpetual(perp, PerpetualEventType::Paused(perp.is_paused()))
-                })
-                .into_iter()
-                .collect(),
+            ExchangeEvents::ContractPaused(e) => {
+                // Bound before the `&mut self` borrow below; a first unpause
+                // anchors the contract's funding schedule to this grid.
+                let funding_interval = self.funding_interval_blocks as u64;
+                self.perpetual(e.perpId)
+                    .map(|perp| {
+                        perp.update_paused(instant, e.paused, funding_interval);
+                        StateEvents::perpetual(perp, PerpetualEventType::Paused(perp.is_paused()))
+                    })
+                    .into_iter()
+                    .collect()
+            },
+            ExchangeEvents::ContractRemoved(e) => {
+                let funding_interval = self.funding_interval_blocks as u64;
+                self.perpetual(e.perpId)
+                    .map(|perp| {
+                        perp.update_paused(instant, true, funding_interval);
+                        StateEvents::perpetual(perp, PerpetualEventType::Paused(perp.is_paused()))
+                    })
+                    .into_iter()
+                    .collect()
+            },
             ExchangeEvents::ContractVersionSet(e) => {
                 let version = ContractVersion::new(e.major.to(), e.minor.to(), e.patch.to());
                 self.features.observe_version(version);
@@ -713,13 +726,17 @@ impl Exchange {
                 .collect(),
             ExchangeEvents::DcpBorrowThreshUpdated(_) => vec![],
             ExchangeEvents::DecreaseCollateralBeyondMarkPrice(_) => vec![],
+            // The unit these rates arrive in follows the deployed version, and the
+            // contract publishes `ContractVersionSet` BEFORE any schedule event in the
+            // upgrade transaction itself -- so reading `self.features` as the event is
+            // handled already reflects the cutover.
             ExchangeEvents::DefaultPerpFeeScheduleSet(e) => self.update_fee_schedule(
                 instant,
                 FeeSchedule::new(
                     FeeScheduleKey::Default,
                     e.takerFeesPer100K,
                     e.makerFeesPer100K,
-                    num::fee_converter(),
+                    self.features.fee_rate_converter(),
                 ),
             ),
             ExchangeEvents::DefaultRwaFeeScheduleSet(e) => self.update_fee_schedule(
@@ -728,7 +745,7 @@ impl Exchange {
                     FeeScheduleKey::RwaDefault,
                     e.takerFeesPer100K,
                     e.makerFeesPer100K,
-                    num::fee_converter(),
+                    self.features.fee_rate_converter(),
                 ),
             ),
             ExchangeEvents::DeleveragePositionListEmpty(_) => vec![],
@@ -755,10 +772,17 @@ impl Exchange {
                         FeeScheduleKey::from_raw(e.feeSchedId),
                         e.takerFeesPer100K,
                         e.makerFeesPer100K,
-                        num::fee_converter(),
+                        self.features.fee_rate_converter(),
                     ),
                 )
             },
+            // Witnesses of the v1.1.7.5 fee-unit redenomination, carried for
+            // completeness rather than state: `initializeV4` emits the id-appropriate
+            // `*FeeScheduleSet` alongside every `FeeScheduleMigrated`, and those arms
+            // are what move the registry -- already in the new unit, because
+            // `ContractVersionSet` came first in the same transaction.
+            ExchangeEvents::FeeScheduleMigrated(_) => vec![],
+            ExchangeEvents::FeeUnitRedenominated(_) => vec![],
             ExchangeEvents::FundingClampPctUpdated(_) => vec![],
             ExchangeEvents::FundingEventCompleted(e) => {
                 if let Some(perp) = self.perpetual(e.perpId) {
@@ -2368,6 +2392,25 @@ impl Exchange {
         self.perpetuals.get_mut(&id.to::<types::PerpetualId>())
     }
 
+    /// Whether [`Chain::excluded_perpetuals`] leaves this contract untracked.
+    ///
+    /// Only the `ContractAdded*` arms consult this. Every other event that
+    /// names a perpetual reaches its state through [`Self::perpetual`],
+    /// [`Self::order`] or [`Self::account_perpetual`], all of which already
+    /// yield nothing for a contract that was never inserted — the same path an
+    /// event takes when [`Chain::perpetuals`] names a deliberate subset. That
+    /// is also why exclusion must NOT be applied by dropping whole events:
+    /// perpetual-scoped events such as `MakerOrderFilled` and
+    /// `PositionLiquidated` also carry the account's exchange-wide
+    /// `balanceCNS`, and those updates are applied outside the per-perpetual
+    /// lookup precisely so that an untracked contract does not silently freeze
+    /// the balance of every account that trades it.
+    fn is_excluded(&self, perp_id: U256) -> bool {
+        self.chain
+            .excluded_perpetuals()
+            .contains(&perp_id.to::<types::PerpetualId>())
+    }
+
     fn account_perpetual(
         &mut self,
         acc_id: U256,
@@ -2437,7 +2480,11 @@ impl std::fmt::Display for Exchange {
         // One row per registered schedule, the tier rates stacked taker over
         // maker. Pre-v1.1.7.4 contracts have no schedule registry - fees live on
         // the perpetual contract itself, and are rendered with it.
-        if self.features.keyed_fee_schedules() {
+        //
+        // Full renderings only: the whole tier grid is a dozen rarely-changing
+        // rates, too much of a header for a live view that redraws every block.
+        // Each perpetual still reports the base rates it resolves to.
+        if f.alternate() && self.features.keyed_fee_schedules() {
             let mut fees = Table::from_iter(chain!(
                 iter::once(
                     chain!(

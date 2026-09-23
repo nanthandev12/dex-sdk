@@ -85,7 +85,7 @@ async fn test_sc_v1174() {
         .order_v2(
             maker.id,
             order(1, btc_perp.id, OpenShort, udec64!(100000), udec64!(0.1))
-                .with_builder(maker_builder),
+                .with_builder_attribution(maker_builder),
         )
         .await
         .get_receipt()
@@ -106,8 +106,10 @@ async fn test_sc_v1174() {
             .unwrap();
 
     // `getContractVersion` is authoritative, so every v1.1.7.4 feature resolves
-    // from it without further probing
-    assert_eq!(discovered.contract_version(), Some(state::ContractVersion::BUILDER_CODES));
+    // from it without further probing. A fresh deployment reports the CURRENT
+    // version, which is well past the one this suite covers - the features are
+    // what is being asserted, not the number.
+    assert_eq!(discovered.contract_version(), Some(state::ContractVersion::PPM_FEE_UNIT));
     let features = discovered.features();
     assert!(features.v2_state_getters());
     assert!(features.keyed_fee_schedules());
@@ -208,7 +210,7 @@ async fn test_sc_v1174() {
         .order_v2(
             taker.id,
             order(2, btc_perp.id, OpenLong, udec64!(100000), udec64!(0.1))
-                .with_builder(taker_builder),
+                .with_builder_attribution(taker_builder),
         )
         .await
         .get_receipt()
